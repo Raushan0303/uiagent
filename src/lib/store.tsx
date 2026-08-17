@@ -2,8 +2,8 @@
 
 import { createContext, useContext, useRef, useCallback, useState, ReactNode } from 'react';
 
-export const INFERROUTE = 'http://localhost:8070';
-export const AGENTMESH = 'http://localhost:8000';
+export const INFERROUTE = process.env.NEXT_PUBLIC_INFERROUTE_URL || 'http://localhost:8070';
+export const AGENTMESH = process.env.NEXT_PUBLIC_AGENTMESH_URL || 'http://localhost:8000';
 
 export interface Supplier {
   name: string;
