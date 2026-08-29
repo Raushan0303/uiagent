@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { AGENTMESH, formatNum } from '@/lib/store';
+import { AgentMeshDiagram, WiringDiagram, InferRouteDiagram, HiringAgentDiagram } from '@/components/ArchitectureDiagrams';
 
 const AGENTMESH_PATTERNS = [
   { color: 'var(--accent)', title: '1. Temporal Workers + Task Queues → Horizontal Scalability', pattern: 'Generic Worker Factory — run_worker(client, task_queue, workflows, activities)', problem: 'How do you scale from 10 to 1,000,000 concurrent agent workflows?', solution: 'Workers are stateless pollers. They pull tasks from a shared Task Queue. To handle 10x more agent workflows, you add 10x more workers — no code changes, no sharding logic. Temporal handles dispatch, dedup, and retry.', why: 'The gateway starts agent workflows, workers execute the agent\'s activities (LLM calls, tool calls, searches). They\'re decoupled. You can scale workers independently of gateways. Add workers on different machines, different regions — they all poll the same queue. Load tested: 10,000 concurrent agent workflows, 98.7% success rate, 5.4x throughput with 4 workers.' },
@@ -290,7 +291,7 @@ export default function ArchitecturePage() {
           Architecture &amp; Engineering Decisions
         </h2>
         <p style={{ fontSize: 15, color: 'var(--text-secondary)', marginTop: 16, lineHeight: 1.6, maxWidth: 700 }}>
-          The patterns that make this system scale to 1M concurrent workflows without breaking.
+          The patterns that let this system scale horizontally — load-tested to 10K concurrent workflows, designed to extend further with more workers and shards.
         </p>
       </div>
 
@@ -337,10 +338,15 @@ export default function ArchitecturePage() {
       <div style={{ marginBottom: 64 }}>
         <div className="mono-label" style={{ marginBottom: 16 }}>AGENTMESH — DURABLE AI AGENT EXECUTION PLATFORM</div>
         <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 24, lineHeight: 1.7 }}>
-          Built on Temporal + LangGraph. Orchestrates multi-step AI agents (Research → Score → Decide → Approve → Confirm)
-          with human-in-the-loop checkpoints, rejection-based retry loops, and cross-workflow failure isolation.
-          Agents are durable (survive crashes), replayable (deterministic), and pauseable (human approval).
+          Built on Temporal + LangGraph. Orchestrates multi-step AI agents with human-in-the-loop checkpoints,
+          rejection-based retry loops, and cross-workflow failure isolation. Agents are durable (survive crashes),
+          replayable (deterministic), and pauseable (human approval). Two real agents run on this engine today:
+          the <strong style={{ color: 'var(--accent)' }}>Sourcing Agent</strong> (Research → Score → Decide → Approve → Confirm)
+          and the <strong style={{ color: 'var(--success)' }}>Hiring Agent</strong> (Screen → Score → Schedule → Interview → Human Review → Offer) —
+          same engine, same reliability primitives, two different domains.
         </p>
+        <AgentMeshDiagram />
+        <HiringAgentDiagram />
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {AGENTMESH_PATTERNS.map((p, i) => (
             <div key={i} className="bordered-panel" style={{ padding: 20, borderLeft: `3px solid ${p.color}` }}>
@@ -803,6 +809,7 @@ Workflow: ${activitiesPerWorkflow} activities × ${avgActivityDuration}s + ${wai
         <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 24, lineHeight: 1.7 }}>
           OpenAI-compatible gateway with complexity-aware routing, multi-layer caching, and provider failover.
         </p>
+        <InferRouteDiagram />
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {INFERROUTE_PATTERNS.map((p, i) => (
             <div key={i} className="bordered-panel" style={{ padding: 20, borderLeft: `3px solid ${p.color}` }}>
@@ -1364,7 +1371,9 @@ Postgres (persistence)
             and <strong style={{ color: 'var(--text-primary)' }}>the LLM providers</strong> (OpenAI/Anthropic). Here&apos;s the full picture at scale, with resource calculations.
           </p>
 
-          {/* Full System Diagram */}
+          <WiringDiagram />
+
+          {/* Full System Diagram (detailed text/ASCII version, same content as the diagram above) */}
           <pre style={{ fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.6, color: 'var(--text-secondary)', background: 'var(--surface)', padding: 16, borderRadius: 8, overflowX: 'auto', marginBottom: 24, whiteSpace: 'pre' }}>
 {`AgentMesh Gateway (port 8000, 2-3 instances)
 │  POST /workflows → start Temporal workflow

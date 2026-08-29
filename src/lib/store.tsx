@@ -19,22 +19,37 @@ export interface Supplier {
 
 export interface Workflow {
   agent_type: string;
-  item: string;
-  quantity: number;
-  budget: number;
   status: 'RUNNING' | 'COMPLETED' | 'FAILED' | 'REJECTED' | 'APPROVED';
   currentStep: number;
   startedAt: number;
   completedAt?: number;
-  suppliers: Supplier[] | null;
-  scoredSuppliers: Supplier[] | null;
-  decision: { selected: Supplier; rationale: string } | null;
-  po: { po_id: string; supplier_name: string; item: string; quantity: number; unit_price: number; total: string; status: string } | null;
   backendWorkflowId?: string;
   isScaleDemo?: boolean;
   rejectionCount?: number;
   rejectionReason?: string;
   approvalComment?: string;
+
+  // sourcing_agent fields
+  item?: string;
+  quantity?: number;
+  budget?: number;
+  suppliers?: Supplier[] | null;
+  scoredSuppliers?: Supplier[] | null;
+  decision?: { selected: Supplier; rationale: string } | null;
+  po?: { po_id: string; supplier_name: string; item: string; quantity: number; unit_price: number; total: string; status: string } | null;
+
+  // hiring_agent fields
+  candidateName?: string;
+  role?: string;
+  resumeText?: string;
+  yearsExperience?: number;
+  targetSalary?: number;
+  skillsMatched?: string[];
+  screeningScore?: number;
+  interviewSlot?: { interviewer: string; slot: string };
+  interviewScore?: number;
+  offerAmount?: number;
+  offerId?: string;
 }
 
 export interface UploadedDoc {
@@ -58,6 +73,15 @@ export const WORKFLOW_STEPS = [
   { id: 'decide', label: 'Decide', detail: 'LLM selects the best supplier' },
   { id: 'approve', label: 'Approve', detail: 'Human checkpoint review' },
   { id: 'confirm', label: 'Confirm', detail: 'Finalize and return result' },
+];
+
+export const HIRING_WORKFLOW_STEPS = [
+  { id: 'screen', label: 'Screen Resume', detail: 'LLM extracts skill signal from the resume' },
+  { id: 'score', label: 'Score Rubric', detail: 'Deterministic scoring vs. the role skill bank' },
+  { id: 'schedule', label: 'Schedule Interview', detail: 'MCP tool books interviewer + calendar slot' },
+  { id: 'interview', label: 'Interview', detail: 'Multi-turn LLM interview, follow-up loop ≤ 3' },
+  { id: 'approve', label: 'Human Review', detail: 'Recruiter checkpoint — approve or reject' },
+  { id: 'confirm', label: 'Offer Decision', detail: 'LLM proposes offer, MCP tool sends it' },
 ];
 
 export const SUPPLIER_POOL = [
@@ -114,6 +138,95 @@ export function generatePO(supplier: Supplier, item: string, quantity: number) {
     total: (supplier.price * quantity).toFixed(2),
     status: 'created',
   };
+}
+
+// ── Hiring agent simulation (mirrors app/agents/hiring_agent on the backend) ──
+
+export const ROLE_SKILL_BANK: Record<string, string[]> = {
+  'Backend Engineer': ['python', 'distributed systems', 'postgres', 'api design', 'kubernetes'],
+  'AI Engineer': ['llm', 'pytorch', 'rag', 'prompt engineering', 'vector database'],
+  'Frontend Engineer': ['react', 'typescript', 'css', 'accessibility', 'performance'],
+  'Data Engineer': ['sql', 'airflow', 'spark', 'etl', 'data modeling'],
+};
+
+export const CANDIDATE_ROLES = Object.keys(ROLE_SKILL_BANK);
+
+export const SAMPLE_CANDIDATES: Record<string, { name: string; resume: string; years: number; salary: number }> = {
+  'Backend Engineer': {
+    name: 'Jane Doe',
+    resume: 'Experienced with Python, distributed systems, Postgres, and Kubernetes. Built API design docs for a payments platform.',
+    years: 6,
+    salary: 180000,
+  },
+  'AI Engineer': {
+    name: 'Priya Nair',
+    resume: 'Built LLM pipelines with PyTorch, RAG retrieval, prompt engineering, and vector database search.',
+    years: 4,
+    salary: 195000,
+  },
+  'Frontend Engineer': {
+    name: 'Robin Chen',
+    resume: 'React, TypeScript, accessibility, and performance optimization across six years of product work.',
+    years: 6,
+    salary: 165000,
+  },
+  'Data Engineer': {
+    name: 'Harper Diaz',
+    resume: 'SQL, Airflow, Spark pipelines, ETL, and data modeling for a 7-year data platform career.',
+    years: 7,
+    salary: 175000,
+  },
+};
+
+const MOCK_INTERVIEWERS = ['Priya Sharma', 'Alex Kim', 'Jordan Lee', 'Sam Okafor'];
+const MOCK_CALENDAR_SLOTS = ['Tue 10:00 AM PT', 'Tue 2:00 PM PT', 'Wed 11:00 AM PT', 'Thu 9:00 AM PT', 'Fri 1:00 PM PT'];
+const SCORE_THRESHOLD = 55.0;
+
+export function screenResume(role: string, resumeText: string): { skillsMatched: string[]; notes: string } {
+  const bank = ROLE_SKILL_BANK[role] || ['communication', 'problem solving', 'ownership', 'collaboration', 'adaptability'];
+  const text = resumeText.toLowerCase();
+  const skillsMatched = bank.filter(skill => text.includes(skill.toLowerCase()));
+  return {
+    skillsMatched,
+    notes: `Keyword match found ${skillsMatched.length} of the role's ${bank.length} key skills in the resume.`,
+  };
+}
+
+export function scoreCandidate(role: string, skillsMatched: string[], yearsExperience: number): number {
+  const bank = ROLE_SKILL_BANK[role] || ['communication', 'problem solving', 'ownership', 'collaboration', 'adaptability'];
+  const skillComponent = 60 * (skillsMatched.length / bank.length);
+  const experienceComponent = Math.min(yearsExperience, 10) * 4;
+  return Math.round((skillComponent + experienceComponent) * 10) / 10;
+}
+
+export function scheduleInterview(candidateName: string, role: string): { interviewer: string; slot: string; calendarId: string } {
+  let h = 0;
+  for (const c of `${candidateName}:${role}`) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return {
+    interviewer: MOCK_INTERVIEWERS[h % MOCK_INTERVIEWERS.length],
+    slot: MOCK_CALENDAR_SLOTS[h % MOCK_CALENDAR_SLOTS.length],
+    calendarId: `CAL-${(h % 100000).toString().padStart(5, '0')}`,
+  };
+}
+
+export function runInterview(skillsMatched: string[]): number {
+  // One deterministic follow-up turn, same fallback rule as the backend's
+  // DeterministicLLMClient path: score delta scales with matched skills.
+  const delta = skillsMatched.length > 0 ? 8 : 4;
+  return Math.round((50 + delta) * 10) / 10;
+}
+
+export function decideOffer(targetSalary: number, interviewScore: number): { offerAmount: number; rationale: string } {
+  const multiplier = interviewScore >= 80 ? 1.0 : 0.93;
+  const offerAmount = Math.round((targetSalary * multiplier) / 100) * 100;
+  return {
+    offerAmount,
+    rationale: `Interview score ${interviewScore.toFixed(1)} → ${(multiplier * 100).toFixed(0)}% of target salary $${targetSalary.toLocaleString()}.`,
+  };
+}
+
+export function getIsRejectedByScore(score: number): boolean {
+  return score < SCORE_THRESHOLD;
 }
 
 export function getSimulatedTraceSpans(workflowId: string): TraceSpan[] {

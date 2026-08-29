@@ -2,6 +2,7 @@
 
 import { useState, useRef } from 'react';
 import { useStore, INFERROUTE, escapeHtml } from '@/lib/store';
+import { withInteractiveGuard } from '@/components/withInteractiveGuard';
 
 interface RagResult {
   doc_id: string;
@@ -10,7 +11,7 @@ interface RagResult {
   content: string;
 }
 
-export default function KnowledgeBasePage() {
+function KnowledgeBasePage() {
   const { uploadedDocs, forceUpdate, version } = useStore();
   const [uploading, setUploading] = useState(false);
   const [searching, setSearching] = useState(false);
@@ -232,3 +233,5 @@ export default function KnowledgeBasePage() {
     </div>
   );
 }
+
+export default withInteractiveGuard(KnowledgeBasePage, 'Knowledge Base', 'knowledge-base');

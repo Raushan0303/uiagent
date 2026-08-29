@@ -2,12 +2,15 @@
 
 import { useState, useRef, useEffect } from 'react';
 import {
-  useStore, AGENTMESH, WORKFLOW_STEPS, ITEMS,
+  useStore, AGENTMESH, WORKFLOW_STEPS, HIRING_WORKFLOW_STEPS, ITEMS,
+  CANDIDATE_ROLES, SAMPLE_CANDIDATES,
   generateSuppliers, scoreSuppliers, generateDecision, generatePO,
+  screenResume, scoreCandidate, scheduleInterview, runInterview, decideOffer, getIsRejectedByScore,
   type Workflow, type Supplier,
 } from '@/lib/store';
+import { withInteractiveGuard } from '@/components/withInteractiveGuard';
 
-export default function WorkflowsPage() {
+function WorkflowsPage() {
   const { activeWorkflows, selectedWorkflow, forceUpdate, version } = useStore();
   const [launching, setLaunching] = useState(false);
   const [scaleLaunching, setScaleLaunching] = useState(false);
@@ -16,11 +19,18 @@ export default function WorkflowsPage() {
   const [showCrashCard, setShowCrashCard] = useState(false);
   const [scaleSummary, setScaleSummary] = useState('');
   const [scaleCells, setScaleCells] = useState<{ id: string; status: string; color: string; item: string }[]>([]);
+  const [agentType, setAgentType] = useState<'sourcing_agent' | 'hiring_agent'>('sourcing_agent');
+  const [hiringRole, setHiringRole] = useState(CANDIDATE_ROLES[0]);
 
   const agentTypeRef = useRef<HTMLSelectElement>(null);
   const itemRef = useRef<HTMLInputElement>(null);
   const qtyRef = useRef<HTMLInputElement>(null);
   const budgetRef = useRef<HTMLInputElement>(null);
+  const candidateNameRef = useRef<HTMLInputElement>(null);
+  const roleRef = useRef<HTMLSelectElement>(null);
+  const resumeTextRef = useRef<HTMLTextAreaElement>(null);
+  const yearsRef = useRef<HTMLInputElement>(null);
+  const salaryRef = useRef<HTMLInputElement>(null);
   const approveCommentRef = useRef<HTMLInputElement>(null);
 
   // Trigger re-render periodically for workflow updates
@@ -35,8 +45,35 @@ export default function WorkflowsPage() {
       if (!w) return;
       if (w.status === 'COMPLETED' || w.status === 'FAILED' || w.status === 'REJECTED' || w.status === 'APPROVED') return;
 
+      if (w.agent_type === 'hiring_agent') {
+        if (w.currentStep === 0) {
+          const screened = screenResume(w.role!, w.resumeText!);
+          w.skillsMatched = screened.skillsMatched;
+          w.screeningScore = scoreCandidate(w.role!, screened.skillsMatched, w.yearsExperience!);
+          if (getIsRejectedByScore(w.screeningScore)) {
+            w.status = 'REJECTED';
+            w.currentStep = 1;
+            w.completedAt = Date.now();
+            forceUpdate();
+            return;
+          }
+          w.currentStep = 1;
+          setTimeout(advance, 1000 + Math.random() * 800);
+        } else if (w.currentStep === 1) {
+          const slot = scheduleInterview(w.candidateName!, w.role!);
+          w.interviewSlot = { interviewer: slot.interviewer, slot: slot.slot };
+          w.currentStep = 2;
+          setTimeout(advance, 1000 + Math.random() * 800);
+        } else if (w.currentStep === 2) {
+          w.interviewScore = runInterview(w.skillsMatched || []);
+          w.currentStep = 3;
+        }
+        forceUpdate();
+        return;
+      }
+
       if (w.currentStep === 0) {
-        w.suppliers = generateSuppliers(w.item, w.budget);
+        w.suppliers = generateSuppliers(w.item!, w.budget!);
         w.currentStep = 1;
         setTimeout(advance, 1200 + Math.random() * 1000);
       } else if (w.currentStep === 1) {
@@ -44,7 +81,7 @@ export default function WorkflowsPage() {
         w.currentStep = 2;
         setTimeout(advance, 1000 + Math.random() * 800);
       } else if (w.currentStep === 2) {
-        w.decision = generateDecision(w.scoredSuppliers!, w.item, w.budget);
+        w.decision = generateDecision(w.scoredSuppliers!, w.item!, w.budget!);
         w.currentStep = 3;
       }
 
@@ -55,23 +92,42 @@ export default function WorkflowsPage() {
 
   const launchWorkflow = async () => {
     setLaunching(true);
-    const agentType = agentTypeRef.current?.value || 'sourcing_agent';
-    const item = itemRef.current?.value.trim() || 'USB-C cable';
-    const quantity = parseInt(qtyRef.current?.value || '100');
-    const budget = parseFloat(budgetRef.current?.value || '5.00');
+    const type = agentTypeRef.current?.value || 'sourcing_agent';
+    const wfId = `${type}-${Math.random().toString(36).substring(2, 10)}`;
 
-    const wfId = `sourcing_agent-${Math.random().toString(36).substring(2, 10)}`;
-    activeWorkflows.current[wfId] = {
-      agent_type: agentType, item, quantity, budget,
-      status: 'RUNNING', currentStep: 0, startedAt: Date.now(),
-      suppliers: null, scoredSuppliers: null, decision: null, po: null,
-    };
+    let body: Record<string, unknown>;
+
+    if (type === 'hiring_agent') {
+      const role = roleRef.current?.value || CANDIDATE_ROLES[0];
+      const sample = SAMPLE_CANDIDATES[role];
+      const candidateName = candidateNameRef.current?.value.trim() || sample.name;
+      const resumeText = resumeTextRef.current?.value.trim() || sample.resume;
+      const yearsExperience = parseFloat(yearsRef.current?.value || String(sample.years));
+      const targetSalary = parseFloat(salaryRef.current?.value || String(sample.salary));
+
+      activeWorkflows.current[wfId] = {
+        agent_type: type, candidateName, role, resumeText, yearsExperience, targetSalary,
+        status: 'RUNNING', currentStep: 0, startedAt: Date.now(),
+      };
+      body = { agent_type: type, input: { candidate_name: candidateName, role, resume_text: resumeText, years_experience: yearsExperience, target_salary: targetSalary } };
+    } else {
+      const item = itemRef.current?.value.trim() || 'USB-C cable';
+      const quantity = parseInt(qtyRef.current?.value || '100');
+      const budget = parseFloat(budgetRef.current?.value || '5.00');
+
+      activeWorkflows.current[wfId] = {
+        agent_type: type, item, quantity, budget,
+        status: 'RUNNING', currentStep: 0, startedAt: Date.now(),
+        suppliers: null, scoredSuppliers: null, decision: null, po: null,
+      };
+      body = { agent_type: type, input: { item, quantity, budget } };
+    }
 
     try {
       const resp = await fetch(`${AGENTMESH}/workflows`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent_type: agentType, input: { item, quantity, budget } }),
+        body: JSON.stringify(body),
       });
       const data = await resp.json();
       if (data.workflow_id) activeWorkflows.current[wfId].backendWorkflowId = data.workflow_id;
@@ -233,25 +289,41 @@ export default function WorkflowsPage() {
     }
 
     activeWorkflows.current[wfId].approvalComment = comment;
+    const wf = activeWorkflows.current[wfId];
+    const isHiring = wf.agent_type === 'hiring_agent';
 
     if (approved) {
-      activeWorkflows.current[wfId].status = 'COMPLETED';
-      activeWorkflows.current[wfId].currentStep = 4;
-      activeWorkflows.current[wfId].completedAt = Date.now();
+      if (isHiring) {
+        const decision = decideOffer(wf.targetSalary!, wf.interviewScore!);
+        wf.offerAmount = decision.offerAmount;
+        wf.offerId = `OFFER-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
+      }
+      wf.status = 'COMPLETED';
+      // Sourcing has 5 steps (last index 4); hiring has 6 (last index 5) —
+      // the extra "Offer Decision" step after Human Review.
+      wf.currentStep = isHiring ? 5 : 4;
+      wf.completedAt = Date.now();
     } else {
-      const rejectionCount = (activeWorkflows.current[wfId].rejectionCount || 0) + 1;
-      activeWorkflows.current[wfId].rejectionCount = rejectionCount;
+      const rejectionCount = (wf.rejectionCount || 0) + 1;
+      wf.rejectionCount = rejectionCount;
       if (rejectionCount >= 3) {
-        activeWorkflows.current[wfId].status = 'REJECTED';
-        activeWorkflows.current[wfId].currentStep = 3;
+        wf.status = 'REJECTED';
+        wf.currentStep = 3;
       } else {
-        activeWorkflows.current[wfId].status = 'RUNNING';
-        activeWorkflows.current[wfId].currentStep = 0;
-        activeWorkflows.current[wfId].rejectionReason = comment;
-        activeWorkflows.current[wfId].suppliers = null;
-        activeWorkflows.current[wfId].scoredSuppliers = null;
-        activeWorkflows.current[wfId].decision = null;
-        activeWorkflows.current[wfId].po = null;
+        wf.status = 'RUNNING';
+        wf.currentStep = 0;
+        wf.rejectionReason = comment;
+        if (isHiring) {
+          wf.skillsMatched = undefined;
+          wf.screeningScore = undefined;
+          wf.interviewSlot = undefined;
+          wf.interviewScore = undefined;
+        } else {
+          wf.suppliers = null;
+          wf.scoredSuppliers = null;
+          wf.decision = null;
+          wf.po = null;
+        }
         simulateWorkflowSteps(wfId);
       }
     }
@@ -296,33 +368,81 @@ export default function WorkflowsPage() {
             <div className="mono-label" style={{ marginBottom: 12 }}>LAUNCH NEW WORKFLOW</div>
             <div style={{ marginBottom: 12 }}>
               <label className="mono-label" style={{ display: 'block', marginBottom: 4 }}>Agent type</label>
-              <select ref={agentTypeRef} className="styled-select" defaultValue="sourcing_agent">
-                <option value="sourcing_agent">Sourcing Agent</option>
+              <select
+                ref={agentTypeRef}
+                className="styled-select"
+                value={agentType}
+                onChange={(e) => setAgentType(e.target.value as 'sourcing_agent' | 'hiring_agent')}
+              >
+                <option value="sourcing_agent">Sourcing Agent — research → score → decide → approve → confirm</option>
+                <option value="hiring_agent">Hiring Agent — screen → score → schedule → interview → review → offer</option>
               </select>
             </div>
-            <div style={{ marginBottom: 12 }}>
-              <label className="mono-label" style={{ display: 'block', marginBottom: 4 }}>Item</label>
-              <input ref={itemRef} type="text" className="styled-input" defaultValue="USB-C cable" placeholder="e.g. USB-C cable" />
-            </div>
-            <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
-              <div style={{ flex: 1 }}>
-                <label className="mono-label" style={{ display: 'block', marginBottom: 4 }}>Quantity</label>
-                <input ref={qtyRef} type="number" className="styled-input" defaultValue={100} min={1} />
-              </div>
-              <div style={{ flex: 1 }}>
-                <label className="mono-label" style={{ display: 'block', marginBottom: 4 }}>Budget per unit ($)</label>
-                <input ref={budgetRef} type="number" className="styled-input" defaultValue="5.00" step={0.01} min={0} />
-              </div>
-            </div>
+
+            {agentType === 'hiring_agent' ? (
+              <>
+                <div style={{ marginBottom: 12 }}>
+                  <label className="mono-label" style={{ display: 'block', marginBottom: 4 }}>Role</label>
+                  <select
+                    ref={roleRef}
+                    className="styled-select"
+                    value={hiringRole}
+                    onChange={(e) => setHiringRole(e.target.value)}
+                  >
+                    {CANDIDATE_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                </div>
+                <div style={{ marginBottom: 12 }}>
+                  <label className="mono-label" style={{ display: 'block', marginBottom: 4 }}>Candidate name</label>
+                  <input ref={candidateNameRef} type="text" className="styled-input" defaultValue={SAMPLE_CANDIDATES[hiringRole].name} key={`name-${hiringRole}`} placeholder="e.g. Jane Doe" />
+                </div>
+                <div style={{ marginBottom: 12 }}>
+                  <label className="mono-label" style={{ display: 'block', marginBottom: 4 }}>Resume text</label>
+                  <textarea ref={resumeTextRef} className="styled-textarea" defaultValue={SAMPLE_CANDIDATES[hiringRole].resume} key={`resume-${hiringRole}`} style={{ minHeight: 70 }} />
+                </div>
+                <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
+                  <div style={{ flex: 1 }}>
+                    <label className="mono-label" style={{ display: 'block', marginBottom: 4 }}>Years experience</label>
+                    <input ref={yearsRef} type="number" className="styled-input" defaultValue={SAMPLE_CANDIDATES[hiringRole].years} key={`years-${hiringRole}`} min={0} step={0.5} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label className="mono-label" style={{ display: 'block', marginBottom: 4 }}>Target salary ($)</label>
+                    <input ref={salaryRef} type="number" className="styled-input" defaultValue={SAMPLE_CANDIDATES[hiringRole].salary} key={`salary-${hiringRole}`} min={0} step={1000} />
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ marginBottom: 12 }}>
+                  <label className="mono-label" style={{ display: 'block', marginBottom: 4 }}>Item</label>
+                  <input ref={itemRef} type="text" className="styled-input" defaultValue="USB-C cable" placeholder="e.g. USB-C cable" />
+                </div>
+                <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
+                  <div style={{ flex: 1 }}>
+                    <label className="mono-label" style={{ display: 'block', marginBottom: 4 }}>Quantity</label>
+                    <input ref={qtyRef} type="number" className="styled-input" defaultValue={100} min={1} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label className="mono-label" style={{ display: 'block', marginBottom: 4 }}>Budget per unit ($)</label>
+                    <input ref={budgetRef} type="number" className="styled-input" defaultValue="5.00" step={0.01} min={0} />
+                  </div>
+                </div>
+              </>
+            )}
+
             <button className="btn-primary" onClick={launchWorkflow} disabled={launching} style={{ width: '100%', marginBottom: 8, justifyContent: 'center' }}>
               {launching ? <><span className="spinner" /> Launching...</> : 'Launch Workflow →'}
             </button>
-            <button className="btn-secondary" onClick={launchScaleDemo} disabled={scaleLaunching} style={{ width: '100%', marginBottom: 8 }}>
-              {scaleLaunching ? 'Launching...' : 'Launch 10 Parallel Workflows'}
-            </button>
-            <button className="btn-secondary" onClick={simulateCrash} style={{ width: '100%' }}>
-              Simulate Worker Crash (Fault Tolerance)
-            </button>
+            {agentType === 'sourcing_agent' && (
+              <>
+                <button className="btn-secondary" onClick={launchScaleDemo} disabled={scaleLaunching} style={{ width: '100%', marginBottom: 8 }}>
+                  {scaleLaunching ? 'Launching...' : 'Launch 10 Parallel Workflows'}
+                </button>
+                <button className="btn-secondary" onClick={simulateCrash} style={{ width: '100%' }}>
+                  Simulate Worker Crash (Fault Tolerance)
+                </button>
+              </>
+            )}
           </div>
 
           {/* Active Workflows */}
@@ -333,15 +453,17 @@ export default function WorkflowsPage() {
             ) : (
               wfIds.slice().reverse().map(id => {
                 const wf = activeWorkflows.current[id];
+                const steps = wf.agent_type === 'hiring_agent' ? HIRING_WORKFLOW_STEPS : WORKFLOW_STEPS;
                 const listStatus = (wf.currentStep >= 3 && wf.status === 'RUNNING') ? 'WAITING_FOR_APPROVAL' : wf.status;
-                const stepLabel = wf.currentStep < WORKFLOW_STEPS.length ? WORKFLOW_STEPS[wf.currentStep].label : 'Done';
+                const stepLabel = wf.currentStep < steps.length ? steps[wf.currentStep].label : 'Done';
+                const subject = wf.agent_type === 'hiring_agent' ? `${wf.candidateName} (${wf.role})` : wf.item;
                 return (
                   <div key={id} className="bordered-panel" style={{ padding: 16, marginBottom: 8, cursor: 'pointer' }} onClick={() => showDetail(id)}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                       <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-primary)' }}>{id}</span>
                       {getStatusBadge(listStatus)}
                     </div>
-                    <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>Agent: {wf.agent_type} · Item: {wf.item} · Step: {stepLabel}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>Agent: {wf.agent_type} · {wf.agent_type === 'hiring_agent' ? 'Candidate' : 'Item'}: {subject} · Step: {stepLabel}</div>
                   </div>
                 );
               })
@@ -361,10 +483,21 @@ export default function WorkflowsPage() {
                 <br />
                 <strong>Agent:</strong> {selWf.agent_type}
                 <br />
-                <strong>Item:</strong> {selWf.item}
-                <br />
-                <strong>Quantity:</strong> {selWf.quantity} · <strong>Budget:</strong> ${selWf.budget}
-                <br />
+                {selWf.agent_type === 'hiring_agent' ? (
+                  <>
+                    <strong>Candidate:</strong> {selWf.candidateName} — {selWf.role}
+                    <br />
+                    <strong>Experience:</strong> {selWf.yearsExperience}y · <strong>Target salary:</strong> ${selWf.targetSalary?.toLocaleString()}
+                    <br />
+                  </>
+                ) : (
+                  <>
+                    <strong>Item:</strong> {selWf.item}
+                    <br />
+                    <strong>Quantity:</strong> {selWf.quantity} · <strong>Budget:</strong> ${selWf.budget}
+                    <br />
+                  </>
+                )}
                 <strong>Status:</strong> {getStatusBadge((selWf.currentStep >= 3 && selWf.status === 'RUNNING') ? 'WAITING_FOR_APPROVAL' : selWf.status)}
                 {selWf.completedAt && selWf.startedAt && (
                   <> · <span style={{ color: 'var(--text-dim)' }}>Completed in {((selWf.completedAt - selWf.startedAt) / 1000).toFixed(1)}s</span></>
@@ -376,7 +509,7 @@ export default function WorkflowsPage() {
 
               {/* Step tracker */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                {WORKFLOW_STEPS.map((step, idx) => {
+                {(selWf.agent_type === 'hiring_agent' ? HIRING_WORKFLOW_STEPS : WORKFLOW_STEPS).map((step, idx) => {
                   let state = '', icon = '•';
                   if (idx < selWf.currentStep) { state = 'completed'; icon = '✓'; }
                   else if (idx === selWf.currentStep) {
@@ -389,7 +522,8 @@ export default function WorkflowsPage() {
                   const borderColor = state === 'completed' ? 'var(--success)' : state === 'active' ? 'var(--accent)' : state === 'rejected' ? 'var(--danger)' : 'var(--border-subtle)';
                   const iconBg = state === 'completed' ? 'var(--success)' : state === 'active' ? 'var(--accent)' : state === 'rejected' ? 'var(--danger)' : 'var(--bg-elevated)';
                   const iconColor = state === 'completed' || state === 'active' || state === 'rejected' ? '#000' : 'var(--text-dim)';
-                  const retryNote = step.id === 'research' && selWf.rejectionCount && selWf.rejectionCount > 0 && selWf.currentStep <= 1
+                  const retryStepId = selWf.agent_type === 'hiring_agent' ? 'screen' : 'research';
+                  const retryNote = step.id === retryStepId && selWf.rejectionCount && selWf.rejectionCount > 0 && selWf.currentStep <= 1
                     ? ` (retry #${selWf.rejectionCount})` : '';
                   return (
                     <div key={idx} className="bordered-panel" style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 12, borderColor }}>
@@ -411,91 +545,159 @@ export default function WorkflowsPage() {
               {selWf.rejectionCount && selWf.rejectionCount > 0 && selWf.status === 'RUNNING' && (
                 <div style={{ marginTop: 12, padding: '10px 14px', background: 'rgba(224, 176, 64, 0.08)', border: '1px solid var(--warning)', borderRadius: 'var(--radius-md)', fontSize: 12, color: 'var(--text-secondary)' }}>
                   <strong style={{ color: 'var(--text-primary)' }}>Agent retrying after rejection</strong> — Reason: &quot;{selWf.rejectionReason || 'No reason given'}&quot;
-                  <br />Going back to Research to find new suppliers. Attempt {selWf.rejectionCount + 1}/3.
+                  <br />{selWf.agent_type === 'hiring_agent' ? 'Re-screening the candidate with recruiter feedback.' : 'Going back to Research to find new suppliers.'} Attempt {selWf.rejectionCount + 1}/3.
                 </div>
               )}
               {selWf.rejectionCount && selWf.rejectionCount >= 3 && selWf.status === 'REJECTED' && (
                 <div style={{ marginTop: 12, padding: '10px 14px', background: 'rgba(255, 92, 92, 0.08)', border: '1px solid var(--danger)', borderRadius: 'var(--radius-md)', fontSize: 12, color: 'var(--text-secondary)' }}>
-                  <strong style={{ color: 'var(--danger)' }}>Agent gave up after 3 rejections</strong> — Could not find a satisfactory supplier.
+                  <strong style={{ color: 'var(--danger)' }}>Agent gave up after 3 rejections</strong> — {selWf.agent_type === 'hiring_agent' ? 'Could not get recruiter sign-off on this candidate.' : 'Could not find a satisfactory supplier.'}
+                </div>
+              )}
+              {selWf.agent_type === 'hiring_agent' && selWf.status === 'REJECTED' && !selWf.rejectionCount && (
+                <div style={{ marginTop: 12, padding: '10px 14px', background: 'rgba(255, 92, 92, 0.08)', border: '1px solid var(--danger)', borderRadius: 'var(--radius-md)', fontSize: 12, color: 'var(--text-secondary)' }}>
+                  <strong style={{ color: 'var(--danger)' }}>Rejected by score</strong> — screening score {selWf.screeningScore?.toFixed(1)} was below the 55.0 threshold. The interview never happens; no worker time spent on a non-viable candidate.
                 </div>
               )}
 
-              {/* Research output table */}
-              {selWf.currentStep >= 1 && selWf.suppliers && (
-                <div style={{ marginTop: 16 }}>
-                  <div className="mono-label" style={{ marginBottom: 8 }}>RESEARCH OUTPUT — {selWf.suppliers.length} suppliers found</div>
-                  <div style={{ overflowX: 'auto' }}>
-                    <table className="styled-table">
-                      <thead><tr><th>Supplier</th><th>Price</th><th>Rating</th><th>Lead Time</th><th>On-Time %</th></tr></thead>
-                      <tbody>
-                        {selWf.suppliers.map((s, i) => (
-                          <tr key={i}><td>{s.name}</td><td className="mono">${s.price.toFixed(2)}</td><td>{s.rating}/5</td><td className="mono">{s.lead_time_days}d</td><td className="mono">{(s.on_time_rate * 100).toFixed(0)}%</td></tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
+              {selWf.agent_type === 'hiring_agent' ? (
+                <>
+                  {/* Screen Resume output */}
+                  {selWf.currentStep >= 1 && selWf.skillsMatched && (
+                    <div style={{ marginTop: 16 }}>
+                      <div className="mono-label" style={{ marginBottom: 8 }}>SCREEN RESUME OUTPUT</div>
+                      <div className="bordered-panel" style={{ padding: 14 }}>
+                        <div style={{ fontSize: 13, marginBottom: 8 }}>
+                          <strong>Screening score:</strong> <span style={{ color: (selWf.screeningScore || 0) >= 55 ? 'var(--success)' : 'var(--danger)', fontFamily: 'var(--font-mono)' }}>{selWf.screeningScore?.toFixed(1)}</span> / 100 (threshold 55.0)
+                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>Matched skills for {selWf.role}:</div>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          {selWf.skillsMatched.length === 0 ? (
+                            <span style={{ fontSize: 12, color: 'var(--text-dim)', fontStyle: 'italic' }}>No skills matched</span>
+                          ) : selWf.skillsMatched.map(s => (
+                            <span key={s} className="bracket-badge" style={{ color: 'var(--success)' }}>{s}</span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
-              {/* Score output table */}
-              {selWf.currentStep >= 2 && selWf.scoredSuppliers && (
-                <div style={{ marginTop: 16 }}>
-                  <div className="mono-label" style={{ marginBottom: 8 }}>SCORE OUTPUT — ranked by composite score (lower = better)</div>
-                  <div style={{ overflowX: 'auto' }}>
-                    <table className="styled-table">
-                      <thead><tr><th>Rank</th><th>Supplier</th><th>Price</th><th>Rating</th><th>Lead Time</th><th>Score</th></tr></thead>
-                      <tbody>
-                        {selWf.scoredSuppliers.map((s, i) => {
-                          const maxScore = Math.max(...selWf.scoredSuppliers!.map(s => Math.abs(s.score || 0)));
-                          return (
-                            <tr key={i} style={i === 0 ? { background: 'rgba(91, 140, 255, 0.08)' } : undefined}>
-                              <td>#{i + 1}</td>
-                              <td>{s.name}</td>
-                              <td className="mono">${s.price.toFixed(2)}</td>
-                              <td>{s.rating}/5</td>
-                              <td className="mono">{s.lead_time_days}d</td>
-                              <td className="mono">
-                                {s.score?.toFixed(2)}
-                                <div className="score-bar"><div className="score-bar-fill" style={{ width: `${100 - (Math.abs(s.score || 0) / maxScore * 100)}%` }} /></div>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
+                  {/* Schedule Interview output */}
+                  {selWf.currentStep >= 2 && selWf.interviewSlot && (
+                    <div style={{ marginTop: 16 }}>
+                      <div className="mono-label" style={{ marginBottom: 8 }}>SCHEDULE INTERVIEW — MCP TOOL CALL</div>
+                      <div className="bordered-panel" style={{ padding: 14, fontSize: 13, lineHeight: 1.8 }}>
+                        <strong>Interviewer:</strong> {selWf.interviewSlot.interviewer}
+                        <br /><strong>Slot:</strong> {selWf.interviewSlot.slot}
+                      </div>
+                    </div>
+                  )}
 
-              {/* Decision panel */}
-              {selWf.currentStep >= 3 && selWf.decision && (
-                <div className="bordered-panel" style={{ marginTop: 16, padding: 14, borderLeft: '3px solid var(--accent)' }}>
-                  <div className="mono-label" style={{ marginBottom: 4 }}>LLM DECISION (VIA INFERROUTE)</div>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
-                    Selected: {selWf.decision.selected.name} — ${selWf.decision.selected.price.toFixed(2)}/unit
-                  </div>
-                  <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 8, lineHeight: 1.6, fontStyle: 'italic' }}>
-                    {selWf.decision.rationale}
-                  </div>
-                  <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-dim)' }}>
-                    Routed to: <strong>gpt-4o-mini</strong> · 342 tokens · $0.0003 · Cache: <span className="bracket-badge" style={{ color: 'var(--warning)' }}>MISS</span>
-                  </div>
-                </div>
-              )}
+                  {/* Interview output */}
+                  {selWf.currentStep >= 3 && selWf.interviewScore != null && (
+                    <div className="bordered-panel" style={{ marginTop: 16, padding: 14, borderLeft: '3px solid var(--success)' }}>
+                      <div className="mono-label" style={{ marginBottom: 4 }}>INTERVIEW COMPLETE (LLM VIA INFERROUTE)</div>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
+                        Interview score: {selWf.interviewScore.toFixed(1)} / 100
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 8, lineHeight: 1.6 }}>
+                        Follow-up loop ran to completion (≤ 3 turns). Awaiting recruiter review.
+                      </div>
+                    </div>
+                  )}
 
-              {/* PO */}
-              {selWf.currentStep >= 4 && selWf.status === 'COMPLETED' && selWf.decision && (
-                <div style={{ marginTop: 16, padding: 14, background: 'rgba(61, 220, 132, 0.06)', border: '1px solid var(--success)', borderRadius: 'var(--radius-md)' }}>
-                  <div className="mono-label" style={{ marginBottom: 8 }}>PURCHASE ORDER CREATED</div>
-                  <div style={{ fontSize: 13, lineHeight: 1.8 }}>
-                    {(() => { if (!selWf.po) selWf.po = generatePO(selWf.decision!.selected, selWf.item, selWf.quantity); return null; })()}
-                    <strong>PO ID:</strong> <span style={{ fontFamily: 'var(--font-mono)' }}>{selWf.po!.po_id}</span>
-                    <br /><strong>Supplier:</strong> {selWf.po!.supplier_name}
-                    <br /><strong>Item:</strong> {selWf.po!.item} × {selWf.po!.quantity}
-                    <br /><strong>Total:</strong> ${selWf.po!.total}
-                    <br /><strong>Status:</strong> <span className="bracket-badge" style={{ color: 'var(--success)' }}>PO CREATED · PAYMENT INITIATED</span>
-                  </div>
-                </div>
+                  {/* Offer sent */}
+                  {selWf.currentStep >= 5 && selWf.status === 'COMPLETED' && selWf.offerId && (
+                    <div style={{ marginTop: 16, padding: 14, background: 'rgba(61, 220, 132, 0.06)', border: '1px solid var(--success)', borderRadius: 'var(--radius-md)' }}>
+                      <div className="mono-label" style={{ marginBottom: 8 }}>OFFER SENT — MCP TOOL CALL</div>
+                      <div style={{ fontSize: 13, lineHeight: 1.8 }}>
+                        <strong>Offer ID:</strong> <span style={{ fontFamily: 'var(--font-mono)' }}>{selWf.offerId}</span>
+                        <br /><strong>Candidate:</strong> {selWf.candidateName} — {selWf.role}
+                        <br /><strong>Offer amount:</strong> ${selWf.offerAmount?.toLocaleString()}
+                        <br /><strong>Status:</strong> <span className="bracket-badge" style={{ color: 'var(--success)' }}>OFFER SENT</span>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  {/* Research output table */}
+                  {selWf.currentStep >= 1 && selWf.suppliers && (
+                    <div style={{ marginTop: 16 }}>
+                      <div className="mono-label" style={{ marginBottom: 8 }}>RESEARCH OUTPUT — {selWf.suppliers.length} suppliers found</div>
+                      <div style={{ overflowX: 'auto' }}>
+                        <table className="styled-table">
+                          <thead><tr><th>Supplier</th><th>Price</th><th>Rating</th><th>Lead Time</th><th>On-Time %</th></tr></thead>
+                          <tbody>
+                            {selWf.suppliers.map((s, i) => (
+                              <tr key={i}><td>{s.name}</td><td className="mono">${s.price.toFixed(2)}</td><td>{s.rating}/5</td><td className="mono">{s.lead_time_days}d</td><td className="mono">{(s.on_time_rate * 100).toFixed(0)}%</td></tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Score output table */}
+                  {selWf.currentStep >= 2 && selWf.scoredSuppliers && (
+                    <div style={{ marginTop: 16 }}>
+                      <div className="mono-label" style={{ marginBottom: 8 }}>SCORE OUTPUT — ranked by composite score (lower = better)</div>
+                      <div style={{ overflowX: 'auto' }}>
+                        <table className="styled-table">
+                          <thead><tr><th>Rank</th><th>Supplier</th><th>Price</th><th>Rating</th><th>Lead Time</th><th>Score</th></tr></thead>
+                          <tbody>
+                            {selWf.scoredSuppliers.map((s, i) => {
+                              const maxScore = Math.max(...selWf.scoredSuppliers!.map(s => Math.abs(s.score || 0)));
+                              return (
+                                <tr key={i} style={i === 0 ? { background: 'rgba(91, 140, 255, 0.08)' } : undefined}>
+                                  <td>#{i + 1}</td>
+                                  <td>{s.name}</td>
+                                  <td className="mono">${s.price.toFixed(2)}</td>
+                                  <td>{s.rating}/5</td>
+                                  <td className="mono">{s.lead_time_days}d</td>
+                                  <td className="mono">
+                                    {s.score?.toFixed(2)}
+                                    <div className="score-bar"><div className="score-bar-fill" style={{ width: `${100 - (Math.abs(s.score || 0) / maxScore * 100)}%` }} /></div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Decision panel */}
+                  {selWf.currentStep >= 3 && selWf.decision && (
+                    <div className="bordered-panel" style={{ marginTop: 16, padding: 14, borderLeft: '3px solid var(--accent)' }}>
+                      <div className="mono-label" style={{ marginBottom: 4 }}>LLM DECISION (VIA INFERROUTE)</div>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
+                        Selected: {selWf.decision.selected.name} — ${selWf.decision.selected.price.toFixed(2)}/unit
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 8, lineHeight: 1.6, fontStyle: 'italic' }}>
+                        {selWf.decision.rationale}
+                      </div>
+                      <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-dim)' }}>
+                        Routed to: <strong>gpt-4o-mini</strong> · 342 tokens · $0.0003 · Cache: <span className="bracket-badge" style={{ color: 'var(--warning)' }}>MISS</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* PO */}
+                  {selWf.currentStep >= 4 && selWf.status === 'COMPLETED' && selWf.decision && (
+                    <div style={{ marginTop: 16, padding: 14, background: 'rgba(61, 220, 132, 0.06)', border: '1px solid var(--success)', borderRadius: 'var(--radius-md)' }}>
+                      <div className="mono-label" style={{ marginBottom: 8 }}>PURCHASE ORDER CREATED</div>
+                      <div style={{ fontSize: 13, lineHeight: 1.8 }}>
+                        {(() => { if (!selWf.po) selWf.po = generatePO(selWf.decision!.selected, selWf.item!, selWf.quantity!); return null; })()}
+                        <strong>PO ID:</strong> <span style={{ fontFamily: 'var(--font-mono)' }}>{selWf.po!.po_id}</span>
+                        <br /><strong>Supplier:</strong> {selWf.po!.supplier_name}
+                        <br /><strong>Item:</strong> {selWf.po!.item} × {selWf.po!.quantity}
+                        <br /><strong>Total:</strong> ${selWf.po!.total}
+                        <br /><strong>Status:</strong> <span className="bracket-badge" style={{ color: 'var(--success)' }}>PO CREATED · PAYMENT INITIATED</span>
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
 
               {/* Approve section */}
@@ -545,3 +747,5 @@ export default function WorkflowsPage() {
     </div>
   );
 }
+
+export default withInteractiveGuard(WorkflowsPage, 'Workflows', 'workflows');

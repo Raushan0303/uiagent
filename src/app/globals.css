@@ -297,3 +297,25 @@ body::after {
   overflow-x: auto;
   white-space: pre;
 }
+
+/* ── Architecture diagrams: animated data-flow connectors ─────────────── */
+/* Dashes drift along the path so arrows read as live traffic, not static lines. */
+@keyframes svg-flow-dash {
+  to { stroke-dashoffset: -16; }
+}
+.svg-flow {
+  animation: svg-flow-dash 0.9s linear infinite;
+}
+
+/* Soft breathing pulse for highlighted diagram nodes (e.g. circuit breaker) */
+@keyframes svg-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+.svg-pulse {
+  animation: svg-pulse 2.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .svg-flow, .svg-pulse { animation: none; }
+}

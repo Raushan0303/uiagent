@@ -2,6 +2,7 @@
 
 import { useState, useRef } from 'react';
 import { INFERROUTE, escapeHtml } from '@/lib/store';
+import { withInteractiveGuard } from '@/components/withInteractiveGuard';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -35,7 +36,7 @@ interface RagInfo {
   sources: RagSource[];
 }
 
-export default function PlaygroundPage() {
+function PlaygroundPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [routing, setRouting] = useState<RoutingInfo | null>(null);
@@ -295,3 +296,5 @@ export default function PlaygroundPage() {
     </div>
   );
 }
+
+export default withInteractiveGuard(PlaygroundPage, 'Playground', 'playground');

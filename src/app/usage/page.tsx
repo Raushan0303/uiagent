@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useStore, INFERROUTE, formatNum } from '@/lib/store';
+import { withInteractiveGuard } from '@/components/withInteractiveGuard';
 
-export default function UsagePage() {
+function UsagePage() {
   const { activeWorkflows, forceUpdate, version } = useStore();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
@@ -244,3 +245,5 @@ export default function UsagePage() {
     </div>
   );
 }
+
+export default withInteractiveGuard(UsagePage, 'Usage & Cost', 'usage');

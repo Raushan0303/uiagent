@@ -2,8 +2,9 @@
 
 import { useState, useRef } from 'react';
 import { useStore, AGENTMESH, getSimulatedTraceSpans, escapeHtml, type TraceSpan } from '@/lib/store';
+import { withInteractiveGuard } from '@/components/withInteractiveGuard';
 
-export default function TracingPage() {
+function TracingPage() {
   const { traceSpans, forceUpdate, version } = useStore();
   const [launching, setLaunching] = useState(false);
   const [running, setRunning] = useState(false);
@@ -327,3 +328,5 @@ export default function TracingPage() {
     </div>
   );
 }
+
+export default withInteractiveGuard(TracingPage, 'Tracing', 'tracing');
