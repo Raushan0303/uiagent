@@ -323,34 +323,34 @@ function TracingPage() {
               so the LLM call appears in the same Jaeger trace as the workflow that triggered it.
             </div>
           </div>
-
-          {/* Langfuse — LLM-specific observability */}
-          <div className="bordered-panel" style={{ padding: 20, marginTop: 16 }}>
-            <div className="mono-label" style={{ marginBottom: 12 }}>LLM OBSERVABILITY — LANGFUSE</div>
-            <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16, lineHeight: 1.7 }}>
-              Jaeger traces the distributed <em>system</em> — gateway to worker to activity. Langfuse traces the
-              <em> LLM call itself</em> — prompt, completion, token usage, cost, and routing decision — as a pluggable
-              tracing backend on InferRoute (<code style={{ fontFamily: 'var(--font-mono)' }}>TracingBackend</code>,
-              self-hosted, swappable for LangSmith). Every completion InferRoute serves becomes a Langfuse
-              observation with the model, provider, tokens in/out, computed cost, and cache-hit status attached.
-            </p>
-            <img
-              src="/langfuse-dashboard.png"
-              alt="Langfuse dashboard showing InferRoute LLM traces with cost, tokens, and latency per call"
-              style={{ width: '100%', borderRadius: 6, border: '1px solid var(--border-default)', marginBottom: 16 }}
-              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-            />
-            <ul style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.8, paddingLeft: 18, marginBottom: 12 }}>
-              <li>Every LLM call routed through InferRoute is a Langfuse trace: prompt, completion, model, provider, input/output tokens, and cost_usd (split input/output pricing).</li>
-              <li>Traces are correlated with the W3C trace_id from the agent workflow, so a Langfuse observation and a Jaeger span for the same call share an ID.</li>
-              <li>Used during Week 12-13 to verify per-call cost computation matched expected pricing before wiring workflow-level cost ceilings on top.</li>
-            </ul>
-            <a href="http://localhost:3000" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)', textDecoration: 'underline', fontSize: 13 }}>
-              Open Langfuse dashboard (local) →
-            </a>
-          </div>
         </>
       )}
+
+      {/* Langfuse — LLM-specific observability (always visible) */}
+      <div className="bordered-panel" style={{ padding: 20, marginTop: 16 }}>
+        <div className="mono-label" style={{ marginBottom: 12 }}>LLM OBSERVABILITY — LANGFUSE</div>
+        <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16, lineHeight: 1.7 }}>
+          Jaeger traces the distributed <em>system</em> — gateway to worker to activity. Langfuse traces the
+          <em> LLM call itself</em> — prompt, completion, token usage, cost, and routing decision — as a pluggable
+          tracing backend on InferRoute (<code style={{ fontFamily: 'var(--font-mono)' }}>TracingBackend</code>,
+          self-hosted, swappable for LangSmith). Every completion InferRoute serves becomes a Langfuse
+          observation with the model, provider, tokens in/out, computed cost, and cache-hit status attached.
+        </p>
+        <img
+          src="/langfuse-dashboard.png"
+          alt="Langfuse dashboard showing InferRoute LLM traces with cost, tokens, and latency per call"
+          style={{ width: '100%', borderRadius: 6, border: '1px solid var(--border-default)', marginBottom: 16 }}
+          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+        />
+        <ul style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.8, paddingLeft: 18, marginBottom: 12 }}>
+          <li>Every LLM call routed through InferRoute is a Langfuse trace: prompt, completion, model, provider, input/output tokens, and cost_usd (split input/output pricing).</li>
+          <li>Traces are correlated with the W3C trace_id from the agent workflow, so a Langfuse observation and a Jaeger span for the same call share an ID.</li>
+          <li>Used during Week 12-13 to verify per-call cost computation matched expected pricing before wiring workflow-level cost ceilings on top.</li>
+        </ul>
+        <a href="http://localhost:3000" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)', textDecoration: 'underline', fontSize: 13 }}>
+          Open Langfuse dashboard (local) →
+        </a>
+      </div>
     </div>
   );
 }
